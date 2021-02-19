@@ -73,6 +73,7 @@ class PropertyAssessmentData:
                                 'CLASS', # R - RESIDENTIAL, U - UTILITIES, I - INDUSTRIAL, C - COMMERCIAL, O - OTHER, G - GOVERNMENT, F - AGRICULTURAL.
                                 'COUNTYTOTAL',
                                 'LOCALTOTAL',
+                                'LOTAREA', 
                                 'FAIRMARKETTOTAL',
                                 'GRADE', # quality of construction
                                 'CONDITION', 'CONDITIONDESC',
@@ -172,7 +173,7 @@ class PropertyAssessmentData:
 
     # calculate stat by group 
     def stat_by_group(self, colname, sdate, edate):
-        t = self.df[['ret', 'SALEPRICE', colname]].reset_index()
+        t = self.df[['ret', 'SALEPRICE', 'LOTAREA', colname]].reset_index()
         t = t[(t.Date >= sdate) & (t.Date <= edate)]
 
         #t = t.loc[t[colname] == colvalue]
@@ -187,14 +188,65 @@ class PropertyAssessmentData:
 
         median_prices = t[np.abs(t.ret) < MAX_SANE_RET][['SALEPRICE', colname]].groupby(colname).median().rename(columns={'SALEPRICE': 'median_price'})
         average_prices = t[np.abs(t.ret) < MAX_SANE_RET][['SALEPRICE', colname]].groupby(colname).mean().rename(columns={'SALEPRICE': 'average_price'})
+
+        standard_deviations_of_prices = t[np.abs(t.ret) < MAX_SANE_RET][['SALEPRICE', colname]].groupby(colname).std().rename(columns={'SALEPRICE': 'std_price'})
         
-        t_out = t_out.join(counts).join(median_prices).join(average_prices)
+        t_out = t_out.join(counts).join(median_prices).join(standard_deviations_of_prices)
+
+        # relative error in prices 
+        t_out['price_rel_err'] = t_out['median_price'] / t_out['std_price']
+
+        median_lotareas = t[np.abs(t.ret) < MAX_SANE_RET][['LOTAREA', colname]].groupby(colname).median().rename(columns={'LOTAREA': 'median_lotarea'})
+        t_out = t_out.join(median_lotareas)
+        
         return t_out
     
     # return different structure conditions
     def different_structure_conditions(self):
         return self.df.CDUDESC.unique()
+
+    # descriptive statistic of lotareas
+    def lotareas_stats(self):
+        print (self.df[['LOTAREA']].describe())
+        return 
+
+    # baseline return
+    def calc_baseline_return(self):
+        bl = self.bl.reset_index()[['Date','BASELINEPX']]
+        PX_START = bl[(bl.Date > '2014-01-01') & (bl.Date < '2015-12-31')]['BASELINEPX'].mean()
+        PX_END = bl[(bl.Date > '2020-06-30')]['BASELINEPX'].mean()
+        print ('EDBG ', PX_START, PX_END)
+        return (PX_END - PX_START) / PX_START
+
+    # price by lotarea and CDU
+    def price_by_lotarea(self):
+        #                    LOTAREA
+        #count  6.645900e+04
+        #mean   1.390668e+04
+        #std    4.791695e+04
+        #min    0.000000e+00
+        #25%    3.700000e+03
+        #50%    7.500000e+03
+        #75%    1.306800e+04
+        #max    4.225320e+06
+        df = self.df[['SALEPRICE', 'LOTAREA', 'CDUDESC']]
+        df.loc[df.LOTAREA < 3.7e3, 'LBIN'] = 'L1'
+        df.loc[(df.LOTAREA >=3.7e3 ) & (df.LOTAREA < 7.5e3), 'LBIN'] = 'L2'
+        df.loc[(df.LOTAREA >=7.5e3 ) & (df.LOTAREA < 1.3e4), 'LBIN'] = 'L3'
+        df.loc[(df.LOTAREA >=1.3e4 ) & (df.LOTAREA < 4.22e6), 'LBIN'] = 'L4'
+        df.loc[(df.LOTAREA >=4.22e6 ), 'LBIN'] = 'L5'
+
+        print (df[['SALEPRICE', 'LBIN']].groupby('LBIN').mean())
+        print ('=======================================')
+
+        print (df[['SALEPRICE', 'CDUDESC', 'LBIN']].groupby(['CDUDESC', 'LBIN']).mean())
+        print ('=======================================')
+
         
+        return
+        
+
+    
 #-------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -216,6 +268,13 @@ if __name__ == "__main__":
 
     print ('structure conditions: ', pad.different_structure_conditions())
 
+    print ('baseline return: ', pad.calc_baseline_return())
+
+    pad.lotareas_stats()
+
+    pad.price_by_lotarea()
+    
+    ##################################################################
     if req == 'price_range_hist':
         price_dist = pad.price_range_histogram()
         #print ('price_dist = ', price_dist)
@@ -268,7 +327,7 @@ if __name__ == "__main__":
         print (stats_validate)
         stats_validate.to_csv('validate.csv')
 
-        sdate = '2016-01-01'
+        sdate = '2020-07-01'
         edate = '2020-10-30'
         stats_invest = pad.stat_by_group(colname, sdate, edate)
         print ('========   Invest ======== ', sdate, ' | ', edate)
